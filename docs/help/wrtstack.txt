@@ -1,0 +1,28 @@
+wrtstack — BPI-R4 OpenWRT 25.12 image builder
+
+Builds flashable SD card and sysupgrade images for Banana Pi BPI-R4 routers
+(MediaTek MT7988A / Filogic 880) with router configuration baked in at build
+time.
+
+Usage:
+  wrtstack <command> [options]
+  wrtstack build <router> [--jobs=N] [--workdir=DIR]
+  wrtstack flash <router> [--device=/dev/sdX] [--jobs=N]
+  wrtstack help [command]
+
+Routers:
+  gw-wrt        Gateway router    env/gw-wrt.env      backups/gw-wrt/
+  office-wrt    Office AP         env/office-wrt.env  backups/office-wrt/
+
+Commands:
+  build   Build a firmware image for a router
+  flash   Build then write the image to an SD card
+  help    Show help for a command
+
+Examples:
+  wrtstack build gw-wrt
+  wrtstack flash gw-wrt --device=/dev/sdb
+  wrtstack build office-wrt --jobs=8
+  wrtstack flash office-wrt              # prompts for device
+
+Use 'wrtstack help <command>' or 'wrtstack <command> help' for details.

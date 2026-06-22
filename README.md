@@ -1,8 +1,8 @@
 # openwrt-builder
 
-Idempotent OpenWRT 25.12 image builder for the **Banana Pi BPI-R4** (MediaTek MT7988A / Filogic 880) with the BPI-R4-NIC-BE14 WiFi 7 card.
+OpenWRT 25.12 image builder for the **Banana Pi BPI-R4** (MediaTek MT7988A / Filogic 880) with the BPI-R4-NIC-BE14 WiFi 7 card.
 
-Produces a bootable SD card image and a sysupgrade `.itb` with configuration baked in at build time. Supports two routers — a gateway (`gw`) and a secondary AP (`office-wrt`) — each with their own package set and optional LuCI config backup.
+Produces bootable SD card images and sysupgrade `.itb` files with configuration baked in at build time. A CLI tool (`wrtstack`) handles build and flash operations for each router in the fleet.
 
 ## Hardware
 
@@ -14,6 +14,26 @@ Produces a bootable SD card image and a sysupgrade `.itb` with configuration bak
 | OpenWRT target | `mediatek/filogic` |
 | OpenWRT profile | `bananapi_bpi-r4` |
 
+## Quick start
+
+```bash
+# Clone with submodule
+git clone --recurse-submodules git@github.com:farscapian/wrtstack.git
+cd wrtstack
+
+# One-time setup: install deps, init submodule, add shell alias
+./setup.sh
+source ~/.bashrc
+
+# Build
+wrtstack build gw-wrt
+wrtstack build office-wrt
+
+# Build + flash
+wrtstack flash gw-wrt --device=/dev/sdb
+wrtstack flash office-wrt            # prompts for device if omitted
+```
+
 ## Prerequisites
 
 - Ubuntu 24.04+ or 26.04 (apt-based)
@@ -21,69 +41,66 @@ Produces a bootable SD card image and a sysupgrade `.itb` with configuration bak
 - Internet access
 - Run as a **normal user** (not root)
 
-Clone with submodule:
+## CLI reference
 
-```bash
-git clone --recurse-submodules git@github.com:farscapian/openwrt-builder.git
-cd openwrt-builder
+```
+wrtstack build <router> [OPTIONS]    Build firmware image
+wrtstack flash <router> [OPTIONS]    Build then flash to SD card
+wrtstack help                        Show help
 ```
 
-## Usage
-
-### Mode A — from a LuCI config backup (production workflow)
-
-Config identity (hostname, IP, network interfaces, WiFi) is sourced entirely from the backup tarball. Pass `--config-backup` and optionally `--flash` to write directly to an SD card.
-
-```bash
-# Build + flash gateway router
-./build-bpi-r4-openwrt.sh \
-    --config-backup=configs/gw-wrt/backup-gw-2026-04-13.tar.gz \
-    --env=configs/gw-wrt/gw-packages.env \
-    --flash --device=/dev/sdb
-
-# Build + flash office AP
-./build-bpi-r4-openwrt.sh \
-    --config-backup=configs/office-wrt/backup-office-wrt-2026-04-13.tar.gz \
-    --env=configs/office-wrt/office-packages.env \
-    --flash --device=/dev/sdb
-```
-
-### Mode B — explicit flags (first build or no backup)
-
-```bash
-./build-bpi-r4-openwrt.sh \
-    --hostname=gw \
-    --lan-ip=192.168.4.2 \
-    --ssh-pubkey="ssh-ed25519 AAAA..." \
-    --env=configs/gw-wrt/gw-packages.env
-```
-
-Valid `--lan-ip` range: `192.168.4.2` – `192.168.4.9`.
-
-### All options
-
-| Flag | Description |
-|------|-------------|
-| `--workdir=DIR` | Build directory (default: `./openwrt-bpi-r4`) |
+| Option | Description |
+|--------|-------------|
+| `--device=/dev/sdX` | Block device for flash (or prompted interactively) |
 | `--jobs=N` | Parallel make jobs (default: `nproc`) |
-| `--env=FILE` | Package env file |
-| `--config-backup=FILE` | LuCI-exported `.tar.gz` backup (Mode A) |
-| `--hostname=NAME` | Router hostname (Mode B) |
-| `--lan-ip=A.B.C.D` | LAN IP in `192.168.4.2–9` (Mode B) |
-| `--ssh-pubkey=KEY` | SSH public key for root login (Mode B) |
-| `--flash` | Flash SD card image after build |
-| `--device=DEV` | Block device for `--flash`, e.g. `/dev/sdb` |
+| `--workdir=DIR` | Build directory (default: `openwrt-bpi-r4/`) |
+
+## Routers
+
+| Name | Role | Env file | Backup dir |
+|------|------|----------|------------|
+| `gw-wrt` | Gateway router | `env/gw-wrt.env` | `backups/gw-wrt/` |
+| `office-wrt` | Office AP | `env/office-wrt.env` | `backups/office-wrt/` |
+
+## How config is selected
+
+### Mode A — LuCI backup (production workflow)
+
+Drop a LuCI-exported `.tar.gz` into `backups/<router>/`. The most recent one is auto-selected and extracted into the OpenWRT `files/` overlay. The backup is authoritative for all identity (hostname, IPs, VLANs, WiFi, WireGuard keys, etc.).
+
+```bash
+# Generate a backup: LuCI → System → Backup / Flash Firmware → Download backup
+cp ~/Downloads/backup-gw-*.tar.gz backups/gw-wrt/
+wrtstack flash gw-wrt --device=/dev/sdb
+```
+
+### Mode B — env vars (first build or recovery)
+
+When no backup exists, `HOSTNAME`, `LAN_IP`, and `SSH_PUBKEY` in the env file are used to generate a minimal first-boot config. Set the full production configuration via LuCI after first boot.
+
+```bash
+# Uncomment in env/gw-wrt.env:
+# HOSTNAME=gw
+# LAN_IP=192.168.4.2
+# SSH_PUBKEY="ssh-ed25519 AAAA..."
+wrtstack build gw-wrt
+```
 
 ## Env files
 
-Each router has a `configs/<name>/<name>-packages.env` defining extra packages:
+Each router has `env/<router>.env` defining its build config:
 
 ```bash
-PACKAGES="hostapd-openssl dawn luci-app-dawn kmod-wireguard wireguard-tools ..."
+# Mode B identity — used only when no backup exists in backups/<router>/
+#HOSTNAME=gw
+#LAN_IP=192.168.4.2
+#SSH_PUBKEY="ssh-ed25519 AAAA..."
+
+PACKAGES="hostapd-openssl dawn luci-app-dawn ..."
 PACKAGES_REMOVE="wpad-basic-wolfssl wpad-wolfssl wpad-openssl"
 ```
 
-Only `PACKAGES` and `PACKAGES_REMOVE` are accepted; any other variable causes an error.
+Env files are tracked in git (they contain no secrets — backup tarballs hold sensitive material and are gitignored).
 
 ## Output images
 
@@ -92,11 +109,15 @@ Built to `openwrt-bpi-r4/bin/targets/mediatek/filogic/`:
 | File | Use |
 |------|-----|
 | `*-bananapi_bpi-r4-sdcard.img.gz` | Bootable SD card image |
-| `*-bananapi_bpi-r4-squashfs-sysupgrade.itb` | LuCI / `sysupgrade` over-the-air |
+| `*-bananapi_bpi-r4-squashfs-sysupgrade.itb` | LuCI / `sysupgrade` OTA |
 
-## mt76 EEPROM TX-power fix
+## BE14 WiFi TX-power fix
 
-The BPI-R4-NIC-BE14 ships with a factory-defective EEPROM that caps 2.4 GHz and 5 GHz TX power at ~6–7 dBm. The build script fetches a patch from immortalwrt that restores output to ~20 dBm by falling back to firmware defaults when the EEPROM value is out of range. The patch is sha256-verified on every run and only re-applied if changed upstream.
+The BPI-R4-NIC-BE14 ships with a factory-defective EEPROM that caps 2.4 GHz and 5 GHz TX power at ~6–7 dBm. wrtstack uses the upstream OpenWRT fix (landed in 25.12.3): a device tree overlay (`mt7988a-bananapi-bpi-r4-wifi-be14`) that provides correct calibration data.
+
+wrtstack bakes `/etc/uci-defaults/99-bpi-r4-be14-wifi` into every image. On first boot, this script runs `fw_setenv bootconf_extra mt7988a-bananapi-bpi-r4-wifi-be14`. U-Boot loads the overlay on the next boot, restoring TX power to ~20 dBm.
+
+The router **auto-reboots ~10 seconds after first boot** to activate the overlay — no manual reboot needed. After the second boot, verify with `iw dev` (expect ~20 dBm) and `fw_printenv bootconf_extra`.
 
 ## Network topology
 
@@ -122,22 +143,26 @@ Domain: `ancapistan.io` · WireGuard VPN · DDNS (Namecheap) · WPA3-SAE + 802.1
 | br-lan.30 | DHCP | serversNet |
 | br-lan.60 | 192.168.6.2/24 | guestNet |
 
-Dnsmasq, firewall, and odhcpd are disabled — pure AP mode. Fast roaming via 802.11r / DAWN (`mobility_domain=a1b2` across all radios).
+Dnsmasq, firewall, and odhcpd disabled — pure AP mode. Fast roaming via 802.11r / DAWN (`mobility_domain=a1b2` across all radios).
 
-## Idempotency
+## Adding a new router
 
-Every run is safe to repeat:
+```bash
+# 1. Create env file
+cp env/office-wrt.env env/new-router.env
+# edit env/new-router.env
 
-- **apt**: no-op for already-installed packages
-- **git**: fetches + fast-forwards; never clobbers local changes
-- **EEPROM patch**: sha256-gated; skipped if unchanged
-- **files/ overlay**: rebuilt from scratch each run
-- **`.config`**: regenerated from base profile + env file each run
-- **make**: incremental; only changed components rebuilt
+# 2. Create backup directory
+mkdir -p backups/new-router
+touch backups/new-router/.gitkeep
+
+# 3. Build
+wrtstack build new-router
+```
 
 ## Submodule
 
-`openwrt-bpi-r4/` tracks [`openwrt/openwrt`](https://github.com/openwrt/openwrt) at a pinned commit on `heads/main`.
+`openwrt-bpi-r4/` tracks [`openwrt/openwrt`](https://github.com/openwrt/openwrt) at a pinned commit.
 
 ```bash
 # Update to latest upstream
@@ -145,3 +170,12 @@ git submodule update --remote openwrt-bpi-r4
 git add openwrt-bpi-r4
 git commit -m "bump openwrt submodule"
 ```
+
+## Idempotency
+
+Every `wrtstack build` run is safe to repeat:
+
+- **apt**: no-op for already-installed packages
+- **files/ overlay**: sha256-gated; rebuilt only when backup or env vars change
+- **`.config`**: regenerated from profile + env on every run
+- **make**: incremental; only changed components rebuild

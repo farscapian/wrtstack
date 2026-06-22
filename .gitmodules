@@ -1,3 +1,6 @@
 [submodule "openwrt-bpi-r4"]
 	path = openwrt-bpi-r4
 	url = https://github.com/openwrt/openwrt.git
+[submodule "agentstartstack"]
+	path = agentstartstack
+	url = git@github.com:farscapian/agentstartstack.git

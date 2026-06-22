@@ -2,19 +2,15 @@
 # .gitignore for bpi-r4 openwrt build project
 # =============================================================================
 
-# OpenWRT build tree is tracked as a submodule, not contents
-# (the submodule pointer in .gitmodules handles it)
-openwrt-bpi-r4/
-
-# Config backups may contain sensitive data (wifi keys, etc.)
-# Track env files but not the backups themselves
-configs/**/*.tar.gz
-configs/**/*.tar
-
-*.env
+# Backup tarballs may contain sensitive data (wifi keys, VPN keys, etc.)
+backups/**/*.tar.gz
+backups/**/*.tar
 
 # Build logs
 *.log
+
+# Claude Code local settings (machine-specific permissions)
+.claude/settings.local.json
 
 # OS / editor noise
 .DS_Store
@@ -24,4 +20,4 @@ Thumbs.db
 *~
 *.swp
 *.swo
-*.stfolder
+.stfolder

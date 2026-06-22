@@ -1,0 +1,32 @@
+wrtstack flash — Build then write the image to an SD card
+
+Usage:
+  wrtstack flash <router> [--device=/dev/sdX] [OPTIONS]
+
+Arguments:
+  <router>   Router name matching an env file (e.g. gw-wrt, office-wrt)
+
+Options:
+  --device=/dev/sdX   Target block device (prompted interactively if omitted)
+  --jobs=N            Parallel make jobs (default: nproc)
+  --workdir=DIR       OpenWRT build directory (default: <repo>/openwrt-bpi-r4)
+
+Safety:
+  - Refuses to flash the device that holds the system root filesystem
+  - Unmounts all partitions on the target device before writing
+  - Requires typing 'yes' at a confirmation prompt before any data is written
+  - Uses pv for a progress bar when available, dd status=progress otherwise
+
+Flash Process:
+  1. Full build  (identical to wrtstack build)
+  2. Unmount all partitions on --device
+  3. gunzip -c <image> | pv | sudo dd bs=4M conv=fsync of=<device>
+  4. sync
+
+Examples:
+  wrtstack flash gw-wrt --device=/dev/sdb
+  wrtstack flash office-wrt                          # prompts for device
+  wrtstack flash gw-wrt --device=/dev/sdc --jobs=16
+
+For post-flash checklist and hardware notes, see:
+  docs/help/wrtstack-flash-detailed.txt

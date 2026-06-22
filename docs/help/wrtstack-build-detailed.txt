@@ -1,0 +1,97 @@
+wrtstack build — Additional Documentation
+
+Extended reference for wrtstack build: EEPROM patch details, files/ overlay
+mechanics, package management, and build troubleshooting.
+
+
+BE14 WiFi TX-Power Fix (DT Overlay)
+=====================================
+
+The BPI-R4-NIC-BE14 (mt7996 / WiFi 7) ships with a defective EEPROM that
+caps 2.4 GHz and 5 GHz TX power at ~6-7 dBm instead of the correct ~20 dBm.
+
+wrtstack uses the upstream OpenWRT fix (landed in 25.12.3, openwrt/openwrt
+PR #22447): a device tree overlay (mt7988a-bananapi-bpi-r4-wifi-be14.dtso)
+that provides correct calibration data. U-Boot loads the overlay when the
+bootconf_extra environment variable is set.
+
+How it works:
+  wrtstack bakes /etc/uci-defaults/99-bpi-r4-be14-wifi into the image.
+  OpenWRT runs uci-defaults scripts once on first boot, then deletes them.
+  The script calls:
+    fw_setenv bootconf_extra mt7988a-bananapi-bpi-r4-wifi-be14
+
+  On the next boot, U-Boot reads bootconf_extra and loads the DT overlay,
+  giving the driver correct calibration data and restoring TX power to ~20 dBm.
+
+  This means WiFi TX power is correct from the second boot onward.
+  The first boot (where fw_setenv runs) will still have low TX power.
+
+To verify TX power after the second boot:
+  iw dev                    # shows tx power per radio (expect ~20 dBm)
+  fw_printenv bootconf_extra  # should print: mt7988a-bananapi-bpi-r4-wifi-be14
+
+
+files/ Overlay Mechanics
+========================
+
+OpenWRT's image builder supports a files/ directory whose contents are
+overlaid onto the root filesystem of the image at build time. wrtstack uses
+this to bake router config directly into the image — no post-flash setup needed.
+
+The overlay is sha256-gated via a sentinel file (.files_overlay_sha256):
+
+  Mode A sentinel value:  backup:<sha256 of .tar.gz>
+  Mode B sentinel value:  flags:<HOSTNAME>:<LAN_IP>:<SSH_PUBKEY>
+
+If the sentinel matches the current inputs, the overlay rebuild is skipped.
+Otherwise the files/ directory is wiped and rebuilt from scratch.
+
+Mode A (backup) overlay:
+  - Validates the .tar.gz is readable before extracting
+  - Extracts all paths under files/
+  - All UCI config, keys, and certificates from LuCI export are included
+
+Mode B (env vars) overlay:
+  files/etc/config/network       Static LAN/WAN + loopback config
+  files/etc/config/system        Hostname + NTP config
+  files/etc/dropbear/authorized_keys
+  files/root/.ssh/authorized_keys
+
+
+Package Management
+==================
+
+Packages are composed in layers:
+
+  BASE_PACKAGES (hardcoded in wrtstack):
+    kmod-mt7996e, kmod-mt76-connac, mt7996-firmware
+    luci, luci-ssl, uhttpd, uhttpd-mod-ubus
+    block-mount, kmod-fs-ext4, kmod-fs-vfat, kmod-usb-storage
+    e2fsprogs, fdisk, pciutils
+
+  PACKAGES (from env/<router>.env):
+    Added as CONFIG_PACKAGE_<name>=y in .config
+
+  PACKAGES_REMOVE (from env/<router>.env):
+    Added as # CONFIG_PACKAGE_<name> is not set in .config
+
+make defconfig then expands .config with all implied dependencies.
+
+
+Build Troubleshooting
+=====================
+
+Build log:
+  openwrt-bpi-r4/build.log
+  On failure, the last 80 lines are printed to stderr automatically.
+
+Common issues:
+  - Feed update fails: check internet connectivity, then re-run
+  - Out of disk: OpenWRT needs ~25 GB; check df -h in openwrt-bpi-r4/
+  - Compile error after submodule update: run 'make clean' in openwrt-bpi-r4/
+    then rebuild (clears stale object files from the previous tree)
+
+Incremental builds:
+  Subsequent runs only recompile changed packages. The .config, feeds, and
+  files/ overlay are all idempotent — safe to re-run at any time.

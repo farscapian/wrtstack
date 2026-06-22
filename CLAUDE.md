@@ -1,77 +1,38 @@
-# CLAUDE.md — openwrt-builder
+# wrtstack -- AI Development Notes (index)
 
-## Project purpose
+OpenWRT 25.12 image builder for Banana Pi BPI-R4. **Load topic files on demand -- do not read this entire index repeatedly.**
 
-Custom OpenWRT 25.12 image builder for Banana Pi BPI-R4 routers (MediaTek MT7988A / Filogic 880). Produces flashable SD card images and sysupgrade images with baked-in configuration.
+## Quick rules
 
-Two routers in production:
-- **gw** — gateway/main router, domain `ancapistan.io`, multi-VLAN (homenet, serversNet, guestNet, UIotNet), WireGuard, DDNS
-- **office-wrt** — secondary AP, no DHCP/firewall/dnsmasq, 802.11r fast roaming
+- Branding: always lowercase `wrtstack` (repo directory is `openwrt` on Sync)
+- Text: ASCII-only in docs, logs, help, and code comments
+- Agents work in session clones, NOT in Sync: Grok -> `~/.grok/worktrees/mini-projects-openwrt/<session-id>/`; Claude Code -> `~/.claude/worktrees/mini-projects-openwrt/<session-id>/`; CLI runs from `~/Sync/mini_projects/openwrt`
+- Claude Code: NEVER edit files under `~/Sync/mini_projects/openwrt` -- use absolute paths to your session clone only
+- New Grok session: run `scripts/init_grok_session.sh`; new Claude Code session: run `scripts/init_claude_session.sh` (see `agentstartstack/ai-guidance/workflow.md`)
+- After changes: commit in session clone; human runs `nut` then `git push origin main` (or `nutup`). NEVER `git push origin` from agents (see `agentstartstack/ai-guidance/nut.md`)
+- Never `nut` or `git pull` on Sync while `wrtstack build` or `wrtstack flash` is running
+- Do not modify `openwrt-bpi-r4/` -- upstream OpenWRT submodule only
 
-## Repository layout
+## Generic guidance (agentstartstack submodule)
 
-```
-openwrt-builder/
-├── build-bpi-r4-openwrt.sh        # Main idempotent build script (799 lines)
-├── openwrt-bpi-r4/                # git submodule → github.com/openwrt/openwrt (heads/main)
-└── configs/
-    ├── gw-wrt/
-    │   ├── gw-packages.env        # Extra packages for gateway router
-    │   └── backup-gw-*.tar.gz     # LuCI config backup (gitignored — may contain secrets)
-    └── office-wrt/
-        ├── office-packages.env    # Extra packages for office AP
-        └── backup-office-wrt-*.tar.gz
-```
+| File | Load when |
+|------|-----------|
+| [agentstartstack/ai-guidance/workflow.md](agentstartstack/ai-guidance/workflow.md) | Repos, session clones, git sync |
+| [agentstartstack/ai-guidance/nut.md](agentstartstack/ai-guidance/nut.md) | `nut` / `nutup` handoff |
+| [agentstartstack/ai-guidance/conventions.md](agentstartstack/ai-guidance/conventions.md) | Naming, ASCII-only, output tags |
+| [agentstartstack/ai-guidance/terminal.md](agentstartstack/ai-guidance/terminal.md) | Cursor/Codium copy-paste |
+| [agentstartstack/ai-guidance/security.md](agentstartstack/ai-guidance/security.md) | Secrets, backups |
+| [agentstartstack/ai-guidance/code-quality.md](agentstartstack/ai-guidance/code-quality.md) | shellcheck, git hooks |
+| [agentstartstack/ai-guidance/testing.md](agentstartstack/ai-guidance/testing.md) | Pre-handoff checks |
 
-## Build invocations
+## Project guidance
 
-Mode A — from LuCI backup (production workflow):
-```bash
-./build-bpi-r4-openwrt.sh \
-    --config-backup=configs/gw-wrt/backup-gw-2026-04-13.tar.gz \
-    --env=configs/gw-wrt/gw-packages.env \
-    --flash --device=/dev/sdX
-```
+| File | Load when |
+|------|-----------|
+| [ai-guidance/architecture.md](ai-guidance/architecture.md) | Layout, design rules, BE14 WiFi fix, submodules |
+| [ai-guidance/cli.md](ai-guidance/cli.md) | `wrtstack` commands, router modes, new router setup |
+| [ai-guidance/configuration.md](ai-guidance/configuration.md) | `env/*.env` format and variables |
 
-Mode B — explicit flags (first-time or no backup):
-```bash
-./build-bpi-r4-openwrt.sh \
-    --hostname=gw \
-    --lan-ip=192.168.4.2 \
-    --ssh-pubkey="ssh-ed25519 AAAA..." \
-    --env=configs/gw-wrt/gw-packages.env
-```
+Full catalog: [ai-guidance/README.md](ai-guidance/README.md).
 
-## Key design rules
-
-- **Never run as root.** The script invokes `sudo` internally where needed.
-- **`--config-backup` is authoritative.** When provided, `--hostname`, `--lan-ip`, `--ssh-pubkey` are silently ignored.
-- **LAN IP range**: `192.168.4.2–9` for Mode B. Production routers use their backup-embedded addresses.
-- **`*.tar.gz` backups are gitignored** — they may contain WiFi PSKs, VPN keys, etc.
-- **`*.env` files are gitignored** — keep them out of git too (may contain secrets via PACKAGES vars).
-- The submodule tracks `openwrt/openwrt` at `heads/main`. Pinned to a specific commit; update deliberately with `git submodule update --remote`.
-
-## EEPROM patch
-
-The mt76 TX-power EEPROM fix (`100-wifi-mt76-mt7996-Use-tx_power-from-default-fw-if-EEP.patch`) is fetched from immortalwrt and applied to the submodule's `package/kernel/mt76/patches/`. It is sha256-checked on every run — only re-applied if changed upstream. Without it, the BPI-R4-NIC-BE14 WiFi 7 card is capped at ~6–7 dBm instead of ~20 dBm.
-
-## Submodule workflow
-
-```bash
-# Initial clone
-git clone --recurse-submodules git@github.com:farscapian/openwrt-builder.git
-
-# After cloning without --recurse-submodules
-git submodule update --init
-
-# Update submodule to latest upstream HEAD
-git submodule update --remote openwrt-bpi-r4
-git add openwrt-bpi-r4 && git commit -m "bump openwrt submodule"
-```
-
-## What Claude should know
-
-- Do not modify files inside `openwrt-bpi-r4/` — it is the upstream OpenWRT tree managed as a submodule.
-- `configs/**/*.tar.gz` and `*.env` files are intentionally gitignored; don't suggest committing them.
-- The build script is idempotent by design; incremental rebuilds are expected and normal.
-- OpenWRT packages for `gw` include WireGuard VPN, DDNS (Namecheap), Prometheus node exporter, DAWN roaming daemon, and full `hostapd-openssl` (required for WPA3-SAE + 802.11r).
+Origin: `git@github.com:farscapian/wrtstack.git`

@@ -1,0 +1,94 @@
+wrtstack flash — Additional Documentation
+
+Extended reference for wrtstack flash: hardware setup, post-flash checklist,
+and troubleshooting.
+
+
+BPI-R4 Hardware Notes
+=====================
+
+SW4 Dip Switch (PCIe power for WiFi 7 card):
+  The BPI-R4-NIC-BE14 WiFi 7 M.2 card requires PCIe power to be enabled via
+  the SW4 dip switch on the board. Without it, the card is not detected and
+  no wireless interfaces appear.
+
+  SW4 → ON before powering on.  Without this step, iw dev will show nothing.
+
+SD Card Slot:
+  The BPI-R4 boots from the SD card slot (not eMMC or USB by default).
+  Insert the flashed card before applying power.
+
+Serial Console (optional):
+  UART is available on the 40-pin GPIO header at 115200 8N1 if needed for
+  troubleshooting boot issues.
+
+
+Post-Flash Checklist
+====================
+
+  1. SW4 dip switch → ON   (PCIe power for BE14 WiFi 7 card)
+  2. Insert SD card and power on the BPI-R4
+  3. Wait ~60 seconds for first boot
+  4. LuCI web UI:  http://<LAN_IP>
+       Default credentials: root / (no password)
+  5. SSH:          ssh root@<LAN_IP>
+       Key auth if SSH_PUBKEY was set in env file (Mode B)
+       Password auth otherwise — set a password immediately via LuCI
+  6. Set root password: LuCI → System → Administration
+  7. Wait for automatic reboot (~10s after first boot completes)
+       The first boot runs /etc/uci-defaults/99-bpi-r4-be14-wifi which calls
+       fw_setenv to activate the BE14 DT overlay, then schedules a reboot in
+       the background and exits. The router reboots automatically ~10 seconds
+       later. U-Boot loads the DT overlay on this second boot.
+  8. After reboot, verify wireless TX power:
+       ssh root@<LAN_IP> iw dev
+       Expected: ~20 dBm on 2.4 GHz and 5 GHz radios
+  9. Confirm DT overlay is active:
+       ssh root@<LAN_IP> fw_printenv bootconf_extra
+       Expected: bootconf_extra=mt7988a-bananapi-bpi-r4-wifi-be14
+
+
+Flash Safety Details
+====================
+
+Root disk guard:
+  wrtstack resolves the block device backing / via findmnt and refuses to
+  flash it. This prevents accidental destruction of the host system even if
+  /dev/sda is passed by mistake.
+
+Partition unmount:
+  All partitions on the target device are unmounted before writing. Partitions
+  that are not currently mounted are skipped silently.
+
+Confirmation prompt:
+  The target device path and image name are printed, and the user must type
+  the literal string 'yes' (not y, not YES) to proceed. Any other input
+  aborts immediately with exit code 0.
+
+Write command:
+  gunzip -c <sdcard.img.gz> | pv | sudo dd bs=4M conv=fsync of=<device>
+
+  pv is used when available (installed by setup.sh) for a live progress bar
+  and ETA. When pv is absent, dd status=progress is used instead.
+
+  conv=fsync ensures all data is flushed to the device before dd exits.
+  sync is called again after dd as an extra guarantee.
+
+
+Troubleshooting
+===============
+
+"Not a block device":
+  Double-check the --device path. Use lsblk to list available devices.
+
+"Refusing: appears to be the system root disk":
+  The path you passed resolves to the disk holding /. Use lsblk to identify
+  the correct target.
+
+Router not reachable after flash (Mode A):
+  The backup contained the production IP. Confirm LAN_IP matches your network.
+  Connect via serial console if needed (115200 8N1).
+
+Router not reachable after flash (Mode B):
+  Confirm LAN_IP in env/<router>.env is reachable from your machine and that
+  your host is on the same subnet.

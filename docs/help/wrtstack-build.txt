@@ -1,0 +1,47 @@
+wrtstack build — Build a firmware image
+
+Usage:
+  wrtstack build <router> [OPTIONS]
+
+Arguments:
+  <router>   Router name matching an env file (e.g. gw-wrt, office-wrt)
+
+Options:
+  --jobs=N        Parallel make jobs (default: nproc)
+  --workdir=DIR   OpenWRT build directory (default: <repo>/openwrt-bpi-r4)
+
+Config Modes:
+  Mode A — LuCI backup (production)
+    The most recent .tar.gz in backups/<router>/ is extracted into the
+    files/ overlay. All router identity (hostname, IPs, VLANs, WiFi,
+    WireGuard keys) comes from the backup. Drop a new backup and rebuild
+    to push any config change into the image.
+
+  Mode B — env vars (first build or recovery)
+    When no backup exists, HOSTNAME, LAN_IP, and SSH_PUBKEY must be set
+    in env/<router>.env. A minimal network and system config is generated.
+    Configure the full production identity via LuCI after first boot, then
+    export a LuCI backup to switch to Mode A.
+
+Build Pipeline:
+  1. Fetch mt76 TX-power EEPROM patch from immortalwrt (sha256-gated;
+     skipped if unchanged — fixes BE14 WiFi 7 card capped at ~6-7 dBm)
+  2. Update and install OpenWRT package feeds  (./scripts/feeds)
+  3. Build files/ config overlay from backup or env vars (sha256-gated;
+     rebuilt only when inputs change)
+  4. Generate .config from target profile + BASE_PACKAGES + env packages
+  5. make defconfig && make -jN
+     First run: 45-90 min.  Subsequent runs: incremental, much faster.
+
+Output:
+  openwrt-bpi-r4/bin/targets/mediatek/filogic/
+    *-bananapi_bpi-r4-sdcard.img.gz              Bootable SD card image
+    *-bananapi_bpi-r4-squashfs-sysupgrade.itb    LuCI / sysupgrade OTA
+
+Examples:
+  wrtstack build gw-wrt
+  wrtstack build office-wrt --jobs=8
+  wrtstack build gw-wrt --workdir=/mnt/fast-ssd/openwrt-bpi-r4
+
+For detailed help including EEPROM patch internals and overlay mechanics, see:
+  docs/help/wrtstack-build-detailed.txt

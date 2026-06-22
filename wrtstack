@@ -1,0 +1,642 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wrtstack — BPI-R4 OpenWRT image builder CLI
+#
+# Commands:
+#   wrtstack build <router>                Build firmware image
+#   wrtstack flash <router> [--device=X]  Build then flash SD card
+#   wrtstack help                         Show usage
+#
+# Router config is read from env/<router>.env. The most recent .tar.gz in
+# backups/<router>/ is used automatically (Mode A). When none exists,
+# HOSTNAME / LAN_IP / SSH_PUBKEY must be set in the env file (Mode B).
+# =============================================================================
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths — located relative to this script's repo root
+# ---------------------------------------------------------------------------
+
+REPO_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
+WORKDIR="${REPO_DIR}/openwrt-bpi-r4"
+ENV_DIR="${REPO_DIR}/env"
+BACKUPS_DIR="${REPO_DIR}/backups"
+
+# ---------------------------------------------------------------------------
+# OpenWRT target constants
+# ---------------------------------------------------------------------------
+
+OPENWRT_VERSION="25.12"
+TARGET="mediatek"
+SUBTARGET="filogic"
+PROFILE="bananapi_bpi-r4"
+
+LAN_NETMASK="255.255.252.0"
+
+# DT overlay name that tells U-Boot to load correct BE14 WiFi 7 calibration data.
+# Activated via fw_setenv on first boot (see build_files_overlay).
+BE14_DT_OVERLAY="mt7988a-bananapi-bpi-r4-wifi-be14"
+
+BASE_PACKAGES=(
+    kmod-mt7996e
+    kmod-mt76-connac
+    mt7996-firmware
+    kmod-mt7996-233-firmware
+    uboot-envtools
+    luci
+    luci-ssl
+    uhttpd
+    uhttpd-mod-ubus
+    block-mount
+    kmod-fs-ext4
+    kmod-fs-vfat
+    kmod-usb-storage
+    e2fsprogs
+    fdisk
+    pciutils
+)
+
+# ---------------------------------------------------------------------------
+# Runtime state — populated by load_env / resolve_backup / cmd_*
+# ---------------------------------------------------------------------------
+
+ROUTER=""
+JOBS=$(nproc)
+CONFIG_BACKUP=""
+HOSTNAME_VAL=""
+LAN_IP_VAL=""
+LAN_GATEWAY_VAL=""
+SSH_PUBKEY_VAL=""
+EXTRA_PACKAGES=()
+REMOVE_PACKAGES=()
+DO_FLASH=false
+FLASH_DEVICE=""
+SDCARD_IMG_PATH=""
+
+# ---------------------------------------------------------------------------
+# Colour helpers
+# ---------------------------------------------------------------------------
+
+RED='\033[0;31m'
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+CYN='\033[0;36m'
+BLD='\033[1m'
+RST='\033[0m'
+
+info()    { echo -e "${CYN}[INFO]${RST}  $*"; }
+success() { echo -e "${GRN}[OK]${RST}    $*"; }
+warn()    { echo -e "${YEL}[WARN]${RST}  $*"; }
+error()   { echo -e "${RED}[ERROR]${RST} $*" >&2; exit 1; }
+banner()  { echo -e "\n${BLD}${CYN}=== $* ===${RST}\n"; }
+
+sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+
+# ---------------------------------------------------------------------------
+# Guards
+# ---------------------------------------------------------------------------
+
+require_not_root() {
+    [[ "${EUID}" -ne 0 ]] \
+        || error "Do not run as root. sudo is invoked internally where required."
+}
+
+verify_submodule() {
+    [[ -f "${WORKDIR}/Makefile" ]] \
+        || error "OpenWRT source not found at ${WORKDIR}.\nRun ./setup.sh first to initialize the submodule."
+}
+
+# ---------------------------------------------------------------------------
+# Env loading
+# ---------------------------------------------------------------------------
+
+load_env() {
+    local router="$1"
+    local env_file="${ENV_DIR}/${router}.env"
+
+    if [[ ! -f "${env_file}" ]]; then
+        local available
+        available=$(find "${ENV_DIR}" -maxdepth 1 -name "*.env" -type f \
+                    | xargs -I{} basename {} .env | sort | tr '\n' ' ')
+        error "No env file for '${router}': ${env_file}\nAvailable routers: ${available}"
+    fi
+
+    # HOSTNAME is auto-set by bash; unset so the env file value (or empty) wins.
+    unset HOSTNAME
+
+    # shellcheck disable=SC1090
+    source "${env_file}"
+
+    HOSTNAME_VAL="${HOSTNAME:-}"
+    LAN_IP_VAL="${LAN_IP:-}"
+    SSH_PUBKEY_VAL="${SSH_PUBKEY:-}"
+
+    local flat_pkg flat_rem
+    flat_pkg=$(echo "${PACKAGES:-}"        | tr '\n' ' ')
+    flat_rem=$(echo "${PACKAGES_REMOVE:-}" | tr '\n' ' ')
+    read -ra EXTRA_PACKAGES  <<< "${flat_pkg}" || true
+    read -ra REMOVE_PACKAGES <<< "${flat_rem}" || true
+
+    [[ ${#EXTRA_PACKAGES[@]}  -gt 0 ]] && info "Extra packages:   ${EXTRA_PACKAGES[*]}"
+    [[ ${#REMOVE_PACKAGES[@]} -gt 0 ]] && info "Packages removed: ${REMOVE_PACKAGES[*]}"
+}
+
+# ---------------------------------------------------------------------------
+# Backup auto-selection
+# ---------------------------------------------------------------------------
+
+resolve_backup() {
+    local router="$1"
+    local backup_dir="${BACKUPS_DIR}/${router}"
+    CONFIG_BACKUP=""
+
+    [[ -d "${backup_dir}" ]] || return
+
+    local latest
+    latest=$(find "${backup_dir}" -maxdepth 1 -name "*.tar.gz" -type f \
+             | sort | tail -1)
+    CONFIG_BACKUP="${latest:-}"
+
+    [[ -n "${CONFIG_BACKUP}" ]] && info "Auto-selected backup: $(basename "${CONFIG_BACKUP}")"
+}
+
+# ---------------------------------------------------------------------------
+# Mode validation
+# ---------------------------------------------------------------------------
+
+validate_mode() {
+    if [[ -n "${CONFIG_BACKUP}" ]]; then
+        info "Mode: A (config backup)"
+        return
+    fi
+
+    info "Mode: B (env vars — no backup in backups/${ROUTER}/)"
+    local missing=()
+    [[ -n "${HOSTNAME_VAL}"   ]] || missing+=(HOSTNAME)
+    [[ -n "${LAN_IP_VAL}"     ]] || missing+=(LAN_IP)
+    [[ -n "${SSH_PUBKEY_VAL}" ]] || missing+=(SSH_PUBKEY)
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error "No backup found and env var(s) not set: ${missing[*]}\n" \
+              "Set them in env/${ROUTER}.env or add a .tar.gz to backups/${ROUTER}/."
+    fi
+
+    validate_lan_ip "${LAN_IP_VAL}"
+
+    if ! [[ "${HOSTNAME_VAL}" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+        error "Invalid HOSTNAME '${HOSTNAME_VAL}' in env/${ROUTER}.env (RFC 1123)."
+    fi
+
+    if ! [[ "${SSH_PUBKEY_VAL}" =~ ^(ssh|ecdsa)-[a-zA-Z0-9-]+ ]]; then
+        error "SSH_PUBKEY in env/${ROUTER}.env does not look like a valid SSH public key."
+    fi
+}
+
+validate_lan_ip() {
+    local ip="$1"
+    if ! [[ "${ip}" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        error "Invalid LAN_IP format: '${ip}'"
+    fi
+    local o1="${BASH_REMATCH[1]}" o2="${BASH_REMATCH[2]}" \
+          o3="${BASH_REMATCH[3]}" o4="${BASH_REMATCH[4]}"
+    for octet in "${o1}" "${o2}" "${o3}" "${o4}"; do
+        (( octet >= 0 && octet <= 255 )) \
+            || error "LAN_IP octet out of range in '${ip}'"
+    done
+    LAN_GATEWAY_VAL="${o1}.${o2}.${o3}.1"
+}
+
+# ---------------------------------------------------------------------------
+# Build pipeline
+# ---------------------------------------------------------------------------
+
+HOST_CONFIG_SITE="${WORKDIR}/staging_dir/host/share/config.site"
+
+prepare_host_env() {
+    # Ubuntu 26.04+: elfutils's gnulib configure check detects that glibc's
+    # argp_parse is "broken" under -D_FORTIFY_SOURCE=3 and tries to replace
+    # it with rpl_argp_parse, then goes looking for a standalone -largp
+    # library that doesn't exist on glibc systems. Setting
+    # gl_cv_func_argp_works=yes via config.site tells gnulib the system argp
+    # is fine and skips the substitution entirely.
+    mkdir -p "${WORKDIR}/staging_dir/host/share"
+    if [[ ! -f "${HOST_CONFIG_SITE}" ]] || \
+       ! grep -q "gl_cv_func_argp_works" "${HOST_CONFIG_SITE}" 2>/dev/null; then
+        info "Writing host config.site (elfutils/gnulib argp workaround)..."
+        cat > "${HOST_CONFIG_SITE}" << 'EOF'
+# config.site — host tool build workarounds for Ubuntu 26.04+ / glibc
+gl_cv_func_argp_works=yes
+EOF
+    fi
+}
+
+update_feeds() {
+    banner "Package feeds"
+    cd "${WORKDIR}"
+    info "Updating feeds..."
+    ./scripts/feeds update -a
+    info "Installing feed packages..."
+    ./scripts/feeds install -a
+    success "Feeds up-to-date."
+}
+
+build_files_overlay() {
+    banner "Router configuration overlay (files/)"
+    cd "${WORKDIR}"
+
+    local files_dir="${WORKDIR}/files"
+    local sentinel="${WORKDIR}/.files_overlay_sha256"
+
+    local current_sig
+    if [[ -n "${CONFIG_BACKUP}" ]]; then
+        current_sig="backup:$(sha256_of "${CONFIG_BACKUP}")"
+    else
+        current_sig="flags:${HOSTNAME_VAL}:${LAN_IP_VAL}:${SSH_PUBKEY_VAL}"
+    fi
+
+    if [[ -f "${sentinel}" \
+            && "$(cat "${sentinel}")" == "${current_sig}" \
+            && -d "${files_dir}" ]]; then
+        success "Overlay unchanged — skipping rebuild."
+        return
+    fi
+
+    info "Overlay inputs changed — rebuilding files/..."
+    rm -rf "${files_dir}"
+    mkdir -p "${files_dir}"
+
+    if [[ -n "${CONFIG_BACKUP}" ]]; then
+        info "Mode A: extracting config backup → ${files_dir}/"
+        tar -tzf "${CONFIG_BACKUP}" > /dev/null 2>&1 \
+            || error "Config backup '${CONFIG_BACKUP}' is not a valid .tar.gz."
+        tar -xzf "${CONFIG_BACKUP}" -C "${files_dir}"
+        info "Extracted paths:"
+        find "${files_dir}" -type f | sed "s|${files_dir}||" | sort | sed 's/^/    /'
+    else
+        info "Mode B: generating config from env vars"
+
+        mkdir -p "${files_dir}/etc/config"
+        mkdir -p "${files_dir}/etc/dropbear"
+        mkdir -p "${files_dir}/root/.ssh"
+
+        cat > "${files_dir}/etc/config/network" << EOF
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'auto'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '${LAN_IP_VAL}'
+	option netmask '${LAN_NETMASK}'
+	option gateway '${LAN_GATEWAY_VAL}'
+	list dns '1.1.1.1'
+	list dns '8.8.8.8'
+
+config interface 'wan'
+	option device 'eth1'
+	option proto 'dhcp'
+
+config interface 'wan6'
+	option device 'eth1'
+	option proto 'dhcpv6'
+EOF
+
+        cat > "${files_dir}/etc/config/system" << EOF
+config system
+	option hostname '${HOSTNAME_VAL}'
+	option timezone 'UTC'
+	option ttylogin '0'
+	option log_size '64'
+	option urandom_seed '0'
+
+config timeserver 'ntp'
+	option enabled '1'
+	option enable_server '0'
+	list server '0.openwrt.pool.ntp.org'
+	list server '1.openwrt.pool.ntp.org'
+	list server '2.openwrt.pool.ntp.org'
+	list server '3.openwrt.pool.ntp.org'
+EOF
+
+        printf '%s\n' "${SSH_PUBKEY_VAL}" \
+            > "${files_dir}/etc/dropbear/authorized_keys"
+        chmod 600 "${files_dir}/etc/dropbear/authorized_keys"
+
+        cp "${files_dir}/etc/dropbear/authorized_keys" \
+           "${files_dir}/root/.ssh/authorized_keys"
+        chmod 700 "${files_dir}/root/.ssh"
+        chmod 600 "${files_dir}/root/.ssh/authorized_keys"
+
+        info "Generated files:"
+        find "${files_dir}" -type f | sed "s|${files_dir}||" | sort | sed 's/^/    /'
+        info "  Hostname: ${HOSTNAME_VAL}"
+        info "  LAN IP:   ${LAN_IP_VAL}/${LAN_NETMASK} (gateway: ${LAN_GATEWAY_VAL})"
+        info "  SSH key:  ${SSH_PUBKEY_VAL:0:40}…"
+    fi
+
+    # Activate the upstream BE14 DT overlay on first boot so U-Boot loads
+    # the correct WiFi 7 calibration data (fixes TX power capped at ~6-7 dBm).
+    # The reboot is scheduled in the background before exit 0 so the
+    # uci-defaults mechanism deletes this script before the reboot fires,
+    # preventing an infinite reboot loop on subsequent boots.
+    local uci_defaults_dir="${files_dir}/etc/uci-defaults"
+    mkdir -p "${uci_defaults_dir}"
+    cat > "${uci_defaults_dir}/99-bpi-r4-be14-wifi" << EOF
+#!/bin/sh
+fw_setenv bootconf_extra ${BE14_DT_OVERLAY}
+( sleep 10 && reboot ) &
+exit 0
+EOF
+    chmod +x "${uci_defaults_dir}/99-bpi-r4-be14-wifi"
+    info "BE14 DT overlay activation script written → /etc/uci-defaults/99-bpi-r4-be14-wifi"
+
+    echo "${current_sig}" > "${sentinel}"
+    success "Configuration overlay ready."
+}
+
+configure_build() {
+    banner "Build configuration (.config)"
+    cd "${WORKDIR}"
+
+    info "Composing package list..."
+    {
+        echo "# Target"
+        echo "CONFIG_TARGET_${TARGET}=y"
+        echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}=y"
+        echo "CONFIG_TARGET_${TARGET}_${SUBTARGET}_DEVICE_${PROFILE}=y"
+        echo ""
+        echo "# Image types"
+        echo "CONFIG_TARGET_ROOTFS_EXT4FS=y"
+        echo "CONFIG_TARGET_IMAGES_GZIP=y"
+        echo ""
+        echo "# Base packages"
+        for pkg in "${BASE_PACKAGES[@]}"; do
+            echo "CONFIG_PACKAGE_${pkg}=y"
+        done
+        if [[ ${#EXTRA_PACKAGES[@]} -gt 0 ]]; then
+            echo ""
+            echo "# Extra packages (from env)"
+            for pkg in "${EXTRA_PACKAGES[@]}"; do
+                echo "CONFIG_PACKAGE_${pkg}=y"
+            done
+        fi
+        if [[ ${#REMOVE_PACKAGES[@]} -gt 0 ]]; then
+            echo ""
+            echo "# Explicitly excluded packages"
+            for pkg in "${REMOVE_PACKAGES[@]}"; do
+                echo "# CONFIG_PACKAGE_${pkg} is not set"
+            done
+        fi
+    } > .config
+
+    info "Expanding with make defconfig..."
+    CONFIG_SITE="${HOST_CONFIG_SITE}" make defconfig
+
+    success "Configuration written."
+    echo "    Base packages:  ${#BASE_PACKAGES[@]}"
+    echo "    Extra packages: ${#EXTRA_PACKAGES[@]}"
+    echo "    Excluded:       ${#REMOVE_PACKAGES[@]}"
+}
+
+build_image() {
+    banner "Building image  (first run: 45–90 min; incremental: faster)"
+    cd "${WORKDIR}"
+
+    info "Parallel jobs: ${JOBS}"
+    info "Log:           ${WORKDIR}/build.log"
+    echo ""
+
+    if ! CONFIG_SITE="${HOST_CONFIG_SITE}" make -j"${JOBS}" V=s 2>&1 | tee build.log; then
+        echo ""
+        echo -e "${RED}Build failed. Last 80 lines of build.log:${RST}" >&2
+        tail -80 "${WORKDIR}/build.log" >&2
+        exit 1
+    fi
+
+    success "Build complete."
+}
+
+report_images() {
+    banner "Output images"
+    cd "${WORKDIR}"
+
+    local img_dir="bin/targets/${TARGET}/${SUBTARGET}"
+    [[ -d "${img_dir}" ]] \
+        || error "Image output directory not found: ${WORKDIR}/${img_dir}"
+
+    local sdcard_img sysupgrade_img
+    sdcard_img=$(find "${img_dir}" -name "*bananapi_bpi-r4*sdcard*.img.gz" \
+                 2>/dev/null | sort | tail -1)
+    sysupgrade_img=$(find "${img_dir}" -name "*bananapi_bpi-r4*sysupgrade*" \
+                     2>/dev/null | sort | tail -1)
+
+    echo ""
+    if [[ -n "${sdcard_img}" ]]; then
+        success "SD card image:    ${WORKDIR}/${sdcard_img}"
+        echo "    Size: $(du -h "${sdcard_img}" | cut -f1)"
+    else
+        warn "SD card image not found — check build output."
+    fi
+
+    if [[ -n "${sysupgrade_img}" ]]; then
+        success "Sysupgrade image: ${WORKDIR}/${sysupgrade_img}"
+        echo "    Size: $(du -h "${sysupgrade_img}" | cut -f1)"
+    else
+        warn "Sysupgrade image not found."
+    fi
+
+    local router_ip="${LAN_IP_VAL:-<ip-from-backup>}"
+    echo ""
+    info "Manual flash:"
+    echo "    gunzip -c ${WORKDIR}/${sdcard_img:-<sdcard-image>} \\"
+    echo "        | sudo dd bs=4M status=progress conv=fsync of=/dev/sdX"
+    echo ""
+    info "First-boot access:"
+    echo "    http://${router_ip}      (LuCI)"
+    echo "    ssh root@${router_ip}    (SSH)"
+
+    SDCARD_IMG_PATH="${sdcard_img}"
+}
+
+flash_sdcard() {
+    banner "Flashing to ${FLASH_DEVICE}"
+    [[ -n "${SDCARD_IMG_PATH}" ]] || error "No SD card image path set — build may have failed."
+    cd "${WORKDIR}"
+
+    local sys_disk
+    sys_disk=$(findmnt -n -o SOURCE / | sed 's/p\?[0-9]*$//')
+    [[ "${FLASH_DEVICE}" != "${sys_disk}" ]] \
+        || error "Refusing: ${FLASH_DEVICE} appears to be the system root disk."
+
+    echo ""
+    warn "Target device: ${FLASH_DEVICE}"
+    warn "Image:         ${WORKDIR}/${SDCARD_IMG_PATH}"
+    warn "ALL DATA ON ${FLASH_DEVICE} WILL BE ERASED."
+    echo ""
+    read -rp "Type 'yes' to proceed: " confirm
+    [[ "${confirm}" == "yes" ]] || { info "Aborted."; exit 0; }
+
+    info "Unmounting partitions on ${FLASH_DEVICE}..."
+    local part
+    while IFS= read -r part; do
+        if [[ -n "${part}" ]] && mountpoint -q "${part}" 2>/dev/null; then
+            info "  Unmounting ${part}..."
+            sudo umount "${part}"
+        fi
+    done < <(lsblk -ln -o PATH "${FLASH_DEVICE}" | tail -n +2)
+
+    info "Writing image..."
+    if command -v pv &>/dev/null; then
+        gunzip -c "${SDCARD_IMG_PATH}" \
+            | pv -s "$(gzip -l "${SDCARD_IMG_PATH}" | awk 'NR==2{print $2}')" \
+            | sudo dd bs=4M conv=fsync of="${FLASH_DEVICE}"
+    else
+        gunzip -c "${SDCARD_IMG_PATH}" \
+            | sudo dd bs=4M status=progress conv=fsync of="${FLASH_DEVICE}"
+    fi
+
+    sync
+    echo ""
+    success "Flash complete."
+
+    local router_ip="${LAN_IP_VAL:-<ip-from-backup>}"
+    local router_host="${HOSTNAME_VAL:-<hostname-from-backup>}"
+    echo ""
+    info "Post-flash checklist:"
+    echo "  1. SW4 dip switch → ON  (enables BE14 PCIe power)"
+    echo "  2. LuCI:     http://${router_ip}"
+    echo "  3. SSH:      ssh root@${router_ip}   (key auth; set root password via LuCI)"
+    echo "  4. Hostname: ${router_host}"
+    echo "  5. Verify TX power:  iw dev  (expect ~20 dBm on 2.4G/5G)"
+    echo "  6. If 6–7 dBm:       dmesg | grep mt7996  (EEPROM load messages)"
+}
+
+# ---------------------------------------------------------------------------
+# Build orchestration
+# ---------------------------------------------------------------------------
+
+run_build() {
+    require_not_root
+    verify_submodule
+    load_env "${ROUTER}"
+    resolve_backup "${ROUTER}"
+    validate_mode
+
+    local mode_label
+    if [[ -n "${CONFIG_BACKUP}" ]]; then
+        mode_label="A (backup: $(basename "${CONFIG_BACKUP}"))"
+    else
+        mode_label="B (env vars)"
+    fi
+
+    echo ""
+    echo -e "${BLD}BPI-R4 OpenWRT ${OPENWRT_VERSION} — ${ROUTER}${RST}"
+    echo -e "  Target:  ${TARGET}/${SUBTARGET} — ${PROFILE}"
+    echo -e "  Workdir: ${WORKDIR}"
+    echo -e "  Jobs:    ${JOBS}"
+    echo -e "  Mode:    ${mode_label}"
+    if [[ -z "${CONFIG_BACKUP}" ]]; then
+        echo -e "  Host:    ${HOSTNAME_VAL}"
+        echo -e "  LAN IP:  ${LAN_IP_VAL}"
+        echo -e "  SSH key: ${SSH_PUBKEY_VAL:0:40}…"
+    fi
+    [[ "${DO_FLASH}" == true ]] && echo -e "  Flash:   ${FLASH_DEVICE}"
+    echo ""
+
+    prepare_host_env
+    update_feeds
+    build_files_overlay
+    configure_build
+    build_image
+    report_images
+
+    [[ "${DO_FLASH}" == true ]] && flash_sdcard
+
+    banner "All done — ${ROUTER}"
+    success "OpenWRT ${OPENWRT_VERSION} for BPI-R4 (${ROUTER}) is ready."
+    info "Router configuration is baked into the image via files/ overlay."
+    info "BE14 WiFi TX-power fix: router will auto-reboot ~10s after first boot to activate DT overlay."
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_build() {
+    shift
+    [[ "${1:-}" == "help" ]] && { help_build; return 0; }
+    [[ $# -ge 1 && "${1:0:1}" != "-" ]] \
+        || error "Usage: wrtstack build <router> [--jobs=N]"
+    ROUTER="$1"; shift
+
+    for arg in "$@"; do
+        case "${arg}" in
+            --jobs=*)    JOBS="${arg#*=}" ;;
+            --workdir=*) WORKDIR="${arg#*=}" ;;
+            *) error "Unknown option: '${arg}'. Run 'wrtstack help'." ;;
+        esac
+    done
+
+    run_build
+}
+
+cmd_flash() {
+    shift
+    [[ "${1:-}" == "help" ]] && { help_flash; return 0; }
+    [[ $# -ge 1 && "${1:0:1}" != "-" ]] \
+        || error "Usage: wrtstack flash <router> [--device=/dev/sdX] [--jobs=N]"
+    ROUTER="$1"; shift
+
+    DO_FLASH=true
+
+    for arg in "$@"; do
+        case "${arg}" in
+            --device=*)  FLASH_DEVICE="${arg#*=}" ;;
+            --jobs=*)    JOBS="${arg#*=}" ;;
+            --workdir=*) WORKDIR="${arg#*=}" ;;
+            *) error "Unknown option: '${arg}'. Run 'wrtstack help'." ;;
+        esac
+    done
+
+    if [[ -z "${FLASH_DEVICE}" ]]; then
+        echo ""
+        read -rp "Flash device (e.g. /dev/sdb): " FLASH_DEVICE
+        [[ -n "${FLASH_DEVICE}" ]] || error "No flash device specified."
+    fi
+
+    [[ -b "${FLASH_DEVICE}" ]] || error "Not a block device: '${FLASH_DEVICE}'"
+
+    run_build
+}
+
+usage()      { cat "${REPO_DIR}/docs/help/wrtstack.txt"; }
+help_build() { cat "${REPO_DIR}/docs/help/wrtstack-build.txt"; }
+help_flash() { cat "${REPO_DIR}/docs/help/wrtstack-flash.txt"; }
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+case "${1:-help}" in
+    build)          cmd_build "$@" ;;
+    flash)          cmd_flash "$@" ;;
+    help|--help|-h)
+        if [[ $# -gt 1 ]]; then
+            case "$2" in
+                build) help_build ;;
+                flash) help_flash ;;
+                *) error "Unknown help topic: '$2'. Try: wrtstack help build | wrtstack help flash" ;;
+            esac
+        else
+            usage
+        fi
+        ;;
+    *) error "Unknown command: '${1}'. Run 'wrtstack help'." ;;
+esac
