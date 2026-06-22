@@ -4,10 +4,10 @@ OpenWRT 25.12 image builder for Banana Pi BPI-R4. **Load topic files on demand -
 
 ## Quick rules
 
-- Branding: always lowercase `wrtstack` (repo directory is `openwrt` on Sync)
+- Branding: always lowercase `wrtstack` (repo directory is `wrtstack` on Sync)
 - Text: ASCII-only in docs, logs, help, and code comments
-- Agents work in session clones, NOT in Sync: Grok -> `~/.grok/worktrees/mini-projects-openwrt/<session-id>/`; Claude Code -> `~/.claude/worktrees/mini-projects-openwrt/<session-id>/`; CLI runs from `~/Sync/mini_projects/openwrt`
-- Claude Code: NEVER edit files under `~/Sync/mini_projects/openwrt` -- use absolute paths to your session clone only
+- Agents work in session clones, NOT in Sync: Grok -> `~/.grok/worktrees/mini-projects-wrtstack/<session-id>/`; Claude Code -> `~/.claude/worktrees/mini-projects-wrtstack/<session-id>/`; CLI runs from `~/Sync/mini_projects/wrtstack`
+- Claude Code: NEVER edit files under `~/Sync/mini_projects/wrtstack` -- use absolute paths to your session clone only
 - New Grok session: run `scripts/init_grok_session.sh`; new Claude Code session: run `scripts/init_claude_session.sh` (see `.agentstartstack/agentstartstack/workflow.md`)
 - After changes: commit in session clone; human runs `nut` then `git push origin main` (or `nutup`). NEVER `git push origin` from agents (see `.agentstartstack/agentstartstack/nut.md`)
 - Never `nut` or `git pull` on Sync while `wrtstack build` or `wrtstack flash` is running
