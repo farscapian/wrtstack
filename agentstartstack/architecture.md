@@ -21,7 +21,7 @@ wrtstack/
 ├── backups/
 │   ├── gw-wrt/                # LuCI config backups for gw-wrt (gitignored *.tar.gz)
 │   └── office-wrt/            # LuCI config backups for office-wrt (gitignored *.tar.gz)
-├── ai-guidance/               # Project-specific agent docs
+├── agentstartstack/           # Project-specific agent docs
 └── openwrt-bpi-r4/            # git submodule -> github.com/openwrt/openwrt (heads/main)
 ```
 
