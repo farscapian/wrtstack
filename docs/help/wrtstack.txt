@@ -1,4 +1,4 @@
-wrtstack — BPI-R4 OpenWRT 25.12 image builder
+wrtstack -- BPI-R4 OpenWRT 25.12 image builder
 
 Builds flashable SD card and sysupgrade images for Banana Pi BPI-R4 routers
 (MediaTek MT7988A / Filogic 880) with router configuration baked in at build

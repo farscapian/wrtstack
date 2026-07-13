@@ -12,17 +12,17 @@ Two routers in production:
 
 ```
 wrtstack/
-├── agentstartstack/           # git submodule -- shared AI agent guidance
-├── setup.sh                   # One-time setup: deps, submodule init, ~/.local/bin symlink
-├── wrtstack                   # CLI tool -- the primary entrypoint
-├── env/
-│   ├── gw-wrt.env             # Package list + Mode B identity vars for gateway router
-│   └── office-wrt.env         # Package list + Mode B identity vars for office AP
-├── backups/
-│   ├── gw-wrt/                # LuCI config backups for gw-wrt (gitignored *.tar.gz)
-│   └── office-wrt/            # LuCI config backups for office-wrt (gitignored *.tar.gz)
-├── agentstartstack/           # Project-specific agent docs
-└── openwrt-bpi-r4/            # git submodule -> github.com/openwrt/openwrt (heads/main)
+|--- .agentstartstack/          # git submodule -- shared AI agent guidance (generic)
+|--- setup.sh                   # One-time setup: deps, submodule init, ~/.local/bin symlink
+|--- wrtstack                   # CLI tool -- the primary entrypoint
+|--- env/
+|   |--- gw-wrt.env             # Package list + Mode B identity vars for gateway router
+|   `--- office-wrt.env         # Package list + Mode B identity vars for office AP
+|--- backups/
+|   |--- gw-wrt/                # LuCI config backups for gw-wrt (gitignored *.tar.gz)
+|   `--- office-wrt/            # LuCI config backups for office-wrt (gitignored *.tar.gz)
+|--- docs/                      # Project-specific agent docs + CLI help text (help/)
+`--- openwrt-bpi-r4/            # git submodule -> github.com/openwrt/openwrt (heads/main)
 ```
 
 ## Key design rules

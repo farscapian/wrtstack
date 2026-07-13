@@ -1,4 +1,4 @@
-wrtstack build — Additional Documentation
+wrtstack build -- Additional Documentation
 
 Extended reference for wrtstack build: EEPROM patch details, files/ overlay
 mechanics, package management, and build troubleshooting.
@@ -37,7 +37,7 @@ files/ Overlay Mechanics
 
 OpenWRT's image builder supports a files/ directory whose contents are
 overlaid onto the root filesystem of the image at build time. wrtstack uses
-this to bake router config directly into the image — no post-flash setup needed.
+this to bake router config directly into the image -- no post-flash setup needed.
 
 The overlay is sha256-gated via a sentinel file (.files_overlay_sha256):
 
@@ -94,4 +94,4 @@ Common issues:
 
 Incremental builds:
   Subsequent runs only recompile changed packages. The .config, feeds, and
-  files/ overlay are all idempotent — safe to re-run at any time.
+  files/ overlay are all idempotent -- safe to re-run at any time.

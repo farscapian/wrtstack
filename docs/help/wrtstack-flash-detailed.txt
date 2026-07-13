@@ -1,4 +1,4 @@
-wrtstack flash — Additional Documentation
+wrtstack flash -- Additional Documentation
 
 Extended reference for wrtstack flash: hardware setup, post-flash checklist,
 and troubleshooting.
@@ -12,7 +12,7 @@ SW4 Dip Switch (PCIe power for WiFi 7 card):
   the SW4 dip switch on the board. Without it, the card is not detected and
   no wireless interfaces appear.
 
-  SW4 → ON before powering on.  Without this step, iw dev will show nothing.
+  SW4 -> ON before powering on.  Without this step, iw dev will show nothing.
 
 SD Card Slot:
   The BPI-R4 boots from the SD card slot (not eMMC or USB by default).
@@ -26,15 +26,15 @@ Serial Console (optional):
 Post-Flash Checklist
 ====================
 
-  1. SW4 dip switch → ON   (PCIe power for BE14 WiFi 7 card)
+  1. SW4 dip switch -> ON   (PCIe power for BE14 WiFi 7 card)
   2. Insert SD card and power on the BPI-R4
   3. Wait ~60 seconds for first boot
   4. LuCI web UI:  http://<LAN_IP>
        Default credentials: root / (no password)
   5. SSH:          ssh root@<LAN_IP>
        Key auth if SSH_PUBKEY was set in env file (Mode B)
-       Password auth otherwise — set a password immediately via LuCI
-  6. Set root password: LuCI → System → Administration
+       Password auth otherwise -- set a password immediately via LuCI
+  6. Set root password: LuCI -> System -> Administration
   7. Wait for automatic reboot (~10s after first boot completes)
        The first boot runs /etc/uci-defaults/99-bpi-r4-be14-wifi which calls
        fw_setenv to activate the BE14 DT overlay, then schedules a reboot in

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# wrtstack — BPI-R4 OpenWRT image builder CLI
+# wrtstack -- BPI-R4 OpenWRT image builder CLI
 #
 # Commands:
 #   wrtstack build <router>                Build firmware image
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Paths — located relative to this script's repo root
+# Paths -- located relative to this script's repo root
 # ---------------------------------------------------------------------------
 
 REPO_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
@@ -58,7 +58,7 @@ BASE_PACKAGES=(
 )
 
 # ---------------------------------------------------------------------------
-# Runtime state — populated by load_env / resolve_backup / cmd_*
+# Runtime state -- populated by load_env / resolve_backup / cmd_*
 # ---------------------------------------------------------------------------
 
 ROUTER=""
@@ -171,7 +171,7 @@ validate_mode() {
         return
     fi
 
-    info "Mode: B (env vars — no backup in backups/${ROUTER}/)"
+    info "Mode: B (env vars -- no backup in backups/${ROUTER}/)"
     local missing=()
     [[ -n "${HOSTNAME_VAL}"   ]] || missing+=(HOSTNAME)
     [[ -n "${LAN_IP_VAL}"     ]] || missing+=(LAN_IP)
@@ -225,7 +225,7 @@ prepare_host_env() {
        ! grep -q "gl_cv_func_argp_works" "${HOST_CONFIG_SITE}" 2>/dev/null; then
         info "Writing host config.site (elfutils/gnulib argp workaround)..."
         cat > "${HOST_CONFIG_SITE}" << 'EOF'
-# config.site — host tool build workarounds for Ubuntu 26.04+ / glibc
+# config.site -- host tool build workarounds for Ubuntu 26.04+ / glibc
 gl_cv_func_argp_works=yes
 EOF
     fi
@@ -258,16 +258,16 @@ build_files_overlay() {
     if [[ -f "${sentinel}" \
             && "$(cat "${sentinel}")" == "${current_sig}" \
             && -d "${files_dir}" ]]; then
-        success "Overlay unchanged — skipping rebuild."
+        success "Overlay unchanged -- skipping rebuild."
         return
     fi
 
-    info "Overlay inputs changed — rebuilding files/..."
+    info "Overlay inputs changed -- rebuilding files/..."
     rm -rf "${files_dir}"
     mkdir -p "${files_dir}"
 
     if [[ -n "${CONFIG_BACKUP}" ]]; then
-        info "Mode A: extracting config backup → ${files_dir}/"
+        info "Mode A: extracting config backup -> ${files_dir}/"
         tar -tzf "${CONFIG_BACKUP}" > /dev/null 2>&1 \
             || error "Config backup '${CONFIG_BACKUP}' is not a valid .tar.gz."
         tar -xzf "${CONFIG_BACKUP}" -C "${files_dir}"
@@ -338,7 +338,7 @@ EOF
         find "${files_dir}" -type f | sed "s|${files_dir}||" | sort | sed 's/^/    /'
         info "  Hostname: ${HOSTNAME_VAL}"
         info "  LAN IP:   ${LAN_IP_VAL}/${LAN_NETMASK} (gateway: ${LAN_GATEWAY_VAL})"
-        info "  SSH key:  ${SSH_PUBKEY_VAL:0:40}…"
+        info "  SSH key:  ${SSH_PUBKEY_VAL:0:40}..."
     fi
 
     # Activate the upstream BE14 DT overlay on first boot so U-Boot loads
@@ -355,7 +355,7 @@ fw_setenv bootconf_extra ${BE14_DT_OVERLAY}
 exit 0
 EOF
     chmod +x "${uci_defaults_dir}/99-bpi-r4-be14-wifi"
-    info "BE14 DT overlay activation script written → /etc/uci-defaults/99-bpi-r4-be14-wifi"
+    info "BE14 DT overlay activation script written -> /etc/uci-defaults/99-bpi-r4-be14-wifi"
 
     echo "${current_sig}" > "${sentinel}"
     success "Configuration overlay ready."
@@ -406,7 +406,7 @@ configure_build() {
 }
 
 build_image() {
-    banner "Building image  (first run: 45–90 min; incremental: faster)"
+    banner "Building image  (first run: 45-90 min; incremental: faster)"
     cd "${WORKDIR}"
 
     info "Parallel jobs: ${JOBS}"
@@ -442,7 +442,7 @@ report_images() {
         success "SD card image:    ${WORKDIR}/${sdcard_img}"
         echo "    Size: $(du -h "${sdcard_img}" | cut -f1)"
     else
-        warn "SD card image not found — check build output."
+        warn "SD card image not found -- check build output."
     fi
 
     if [[ -n "${sysupgrade_img}" ]]; then
@@ -467,7 +467,7 @@ report_images() {
 
 flash_sdcard() {
     banner "Flashing to ${FLASH_DEVICE}"
-    [[ -n "${SDCARD_IMG_PATH}" ]] || error "No SD card image path set — build may have failed."
+    [[ -n "${SDCARD_IMG_PATH}" ]] || error "No SD card image path set -- build may have failed."
     cd "${WORKDIR}"
 
     local sys_disk
@@ -510,12 +510,12 @@ flash_sdcard() {
     local router_host="${HOSTNAME_VAL:-<hostname-from-backup>}"
     echo ""
     info "Post-flash checklist:"
-    echo "  1. SW4 dip switch → ON  (enables BE14 PCIe power)"
+    echo "  1. SW4 dip switch -> ON  (enables BE14 PCIe power)"
     echo "  2. LuCI:     http://${router_ip}"
     echo "  3. SSH:      ssh root@${router_ip}   (key auth; set root password via LuCI)"
     echo "  4. Hostname: ${router_host}"
     echo "  5. Verify TX power:  iw dev  (expect ~20 dBm on 2.4G/5G)"
-    echo "  6. If 6–7 dBm:       dmesg | grep mt7996  (EEPROM load messages)"
+    echo "  6. If 6-7 dBm:       dmesg | grep mt7996  (EEPROM load messages)"
 }
 
 # ---------------------------------------------------------------------------
@@ -537,15 +537,16 @@ run_build() {
     fi
 
     echo ""
-    echo -e "${BLD}BPI-R4 OpenWRT ${OPENWRT_VERSION} — ${ROUTER}${RST}"
-    echo -e "  Target:  ${TARGET}/${SUBTARGET} — ${PROFILE}"
+    echo -e "${BLD}BPI-R4 OpenWRT ${OPENWRT_VERSION} -- ${ROUTER}${RST}"
+    echo -e "  Target:  ${TARGET}/${SUBTARGET} -- ${PROFILE}"
     echo -e "  Workdir: ${WORKDIR}"
     echo -e "  Jobs:    ${JOBS}"
     echo -e "  Mode:    ${mode_label}"
+    echo -e "  GIT HEAD:${AGENTSTARTSTACK_CLI_HEAD:-unknown}"
     if [[ -z "${CONFIG_BACKUP}" ]]; then
         echo -e "  Host:    ${HOSTNAME_VAL}"
         echo -e "  LAN IP:  ${LAN_IP_VAL}"
-        echo -e "  SSH key: ${SSH_PUBKEY_VAL:0:40}…"
+        echo -e "  SSH key: ${SSH_PUBKEY_VAL:0:40}..."
     fi
     [[ "${DO_FLASH}" == true ]] && echo -e "  Flash:   ${FLASH_DEVICE}"
     echo ""
@@ -559,7 +560,7 @@ run_build() {
 
     [[ "${DO_FLASH}" == true ]] && flash_sdcard
 
-    banner "All done — ${ROUTER}"
+    banner "All done -- ${ROUTER}"
     success "OpenWRT ${OPENWRT_VERSION} for BPI-R4 (${ROUTER}) is ready."
     info "Router configuration is baked into the image via files/ overlay."
     info "BE14 WiFi TX-power fix: router will auto-reboot ~10s after first boot to activate DT overlay."
@@ -623,6 +624,11 @@ help_flash() { cat "${REPO_DIR}/docs/help/wrtstack-flash.txt"; }
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+
+# Shared agentstartstack preamble: per-invocation working-tree hygiene, so GIT
+# HEAD documents the exact code this run built. No-op in agent session clones.
+eval "$(AGENTSTARTSTACK_CLI_TOOL=wrtstack \
+    "${REPO_DIR}/.agentstartstack/scripts/cli-preamble.sh" "${REPO_DIR}")"
 
 case "${1:-help}" in
     build)          cmd_build "$@" ;;

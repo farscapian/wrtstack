@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup.sh — One-time setup for the BPI-R4 OpenWRT builder
+# setup.sh -- One-time setup for the BPI-R4 OpenWRT builder
 #
 # - Installs apt build dependencies
 # - Initializes the openwrt-bpi-r4 git submodule
@@ -171,7 +171,7 @@ main() {
     require_not_root
 
     echo ""
-    echo -e "${BLD}${CYN}BPI-R4 OpenWRT Builder — Setup${RST}"
+    echo -e "${BLD}${CYN}BPI-R4 OpenWRT Builder -- Setup${RST}"
     echo ""
 
     install_deps

@@ -64,17 +64,17 @@ wrtstack help                        Show help
 
 ## How config is selected
 
-### Mode A — LuCI backup (production workflow)
+### Mode A -- LuCI backup (production workflow)
 
 Drop a LuCI-exported `.tar.gz` into `backups/<router>/`. The most recent one is auto-selected and extracted into the OpenWRT `files/` overlay. The backup is authoritative for all identity (hostname, IPs, VLANs, WiFi, WireGuard keys, etc.).
 
 ```bash
-# Generate a backup: LuCI → System → Backup / Flash Firmware → Download backup
+# Generate a backup: LuCI -> System -> Backup / Flash Firmware -> Download backup
 cp ~/Downloads/backup-gw-*.tar.gz backups/gw-wrt/
 wrtstack flash gw-wrt --device=/dev/sdb
 ```
 
-### Mode B — env vars (first build or recovery)
+### Mode B -- env vars (first build or recovery)
 
 When no backup exists, `HOSTNAME`, `LAN_IP`, and `SSH_PUBKEY` in the env file are used to generate a minimal first-boot config. Set the full production configuration via LuCI after first boot.
 
@@ -91,7 +91,7 @@ wrtstack build gw-wrt
 Each router has `env/<router>.env` defining its build config:
 
 ```bash
-# Mode B identity — used only when no backup exists in backups/<router>/
+# Mode B identity -- used only when no backup exists in backups/<router>/
 #HOSTNAME=gw
 #LAN_IP=192.168.4.2
 #SSH_PUBKEY="ssh-ed25519 AAAA..."
@@ -100,7 +100,7 @@ PACKAGES="hostapd-openssl dawn luci-app-dawn ..."
 PACKAGES_REMOVE="wpad-basic-wolfssl wpad-wolfssl wpad-openssl"
 ```
 
-Env files are tracked in git (they contain no secrets — backup tarballs hold sensitive material and are gitignored).
+Env files are tracked in git (they contain no secrets -- backup tarballs hold sensitive material and are gitignored).
 
 ## Output images
 
@@ -113,11 +113,11 @@ Built to `openwrt-bpi-r4/bin/targets/mediatek/filogic/`:
 
 ## BE14 WiFi TX-power fix
 
-The BPI-R4-NIC-BE14 ships with a factory-defective EEPROM that caps 2.4 GHz and 5 GHz TX power at ~6–7 dBm. wrtstack uses the upstream OpenWRT fix (landed in 25.12.3): a device tree overlay (`mt7988a-bananapi-bpi-r4-wifi-be14`) that provides correct calibration data.
+The BPI-R4-NIC-BE14 ships with a factory-defective EEPROM that caps 2.4 GHz and 5 GHz TX power at ~6-7 dBm. wrtstack uses the upstream OpenWRT fix (landed in 25.12.3): a device tree overlay (`mt7988a-bananapi-bpi-r4-wifi-be14`) that provides correct calibration data.
 
 wrtstack bakes `/etc/uci-defaults/99-bpi-r4-be14-wifi` into every image. On first boot, this script runs `fw_setenv bootconf_extra mt7988a-bananapi-bpi-r4-wifi-be14`. U-Boot loads the overlay on the next boot, restoring TX power to ~20 dBm.
 
-The router **auto-reboots ~10 seconds after first boot** to activate the overlay — no manual reboot needed. After the second boot, verify with `iw dev` (expect ~20 dBm) and `fw_printenv bootconf_extra`.
+The router **auto-reboots ~10 seconds after first boot** to activate the overlay -- no manual reboot needed. After the second boot, verify with `iw dev` (expect ~20 dBm) and `fw_printenv bootconf_extra`.
 
 ## Network topology
 
@@ -132,7 +132,7 @@ The router **auto-reboots ~10 seconds after first boot** to activate the overlay
 | br-lan.70 | 192.168.8.1 | UIotNet VLAN |
 | WAN | DHCP | Uplink |
 
-Domain: `ancapistan.io` · WireGuard VPN · DDNS (Namecheap) · WPA3-SAE + 802.11r
+Domain: `ancapistan.io` | WireGuard VPN | DDNS (Namecheap) | WPA3-SAE + 802.11r
 
 ### office-wrt (secondary AP)
 
@@ -143,7 +143,7 @@ Domain: `ancapistan.io` · WireGuard VPN · DDNS (Namecheap) · WPA3-SAE + 802.1
 | br-lan.30 | DHCP | serversNet |
 | br-lan.60 | 192.168.6.2/24 | guestNet |
 
-Dnsmasq, firewall, and odhcpd disabled — pure AP mode. Fast roaming via 802.11r / DAWN (`mobility_domain=a1b2` across all radios).
+Dnsmasq, firewall, and odhcpd disabled -- pure AP mode. Fast roaming via 802.11r / DAWN (`mobility_domain=a1b2` across all radios).
 
 ## Adding a new router
 

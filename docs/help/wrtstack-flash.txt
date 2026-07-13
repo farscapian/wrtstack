@@ -1,4 +1,4 @@
-wrtstack flash — Build then write the image to an SD card
+wrtstack flash -- Build then write the image to an SD card
 
 Usage:
   wrtstack flash <router> [--device=/dev/sdX] [OPTIONS]

@@ -2,6 +2,8 @@
 
 The CLI entrypoint is `wrtstack` (repo root). All build logic lives there; `setup.sh` is one-time setup only.
 
+CLI behavior rules (entrypoint, help-as-data, output tags, exit codes, confirmations) are generic and authoritative in [.agentstartstack/docs/cli-conventions.md](../.agentstartstack/docs/cli-conventions.md); help-file layout for `docs/help/*.txt` is in [.agentstartstack/docs/cli-help.md](../.agentstartstack/docs/cli-help.md). This file covers only what is specific to wrtstack.
+
 ## Usage
 
 ```bash
@@ -37,5 +39,4 @@ wrtstack help
 
 - The `HOSTNAME` bash builtin is `unset` before sourcing env files to prevent it from shadowing the env var.
 - `backups/**/*.tar.gz` are intentionally gitignored; never suggest committing them.
-- Do not run `wrtstack flash` against an SD card the human is already flashing.
-- While `wrtstack build` or `wrtstack flash` is running on Sync, do not `nut` or `git pull` on Sync.
+- Active-run guard for this project: `pgrep -af 'wrtstack (build|flash)'` (`ACTIVE_GUARD_PGREP` in `.agentstartstack.env`). The rules for live CLI runs -- no handoff, no `git pull` on canonical, no competing for the SD card or serial device while a run is active -- are generic: see [.agentstartstack/docs/workflow.md](../.agentstartstack/docs/workflow.md#3-active-cli-sessions-agents--mandatory).
